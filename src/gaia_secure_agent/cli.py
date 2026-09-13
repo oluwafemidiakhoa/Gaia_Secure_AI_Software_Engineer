@@ -95,7 +95,18 @@ def stage(
     job = _build_job(repo, "stage immutable repository source", base_branch, "stager", 180, 1)
     manager = OpenShellSandboxManager(policy_path=policy)
     staged = stage_job_source(job, manager, output_dir)
-    rendered = json.dumps(staged.model_dump(mode="json"), indent=2, default=str)
+
+    sandbox_digest = manager.sha256(staged.sandbox_name and __import__("gaia_secure_agent.sandbox", fromlist=["SandboxHandle"]).SandboxHandle(name=staged.sandbox_name), "/sandbox/input/source.tar.gz")
+    expected_digest = staged.acquisition.bundle.archive_sha256
+    if sandbox_digest != expected_digest:
+        cleanup_staged_source(manager, staged.sandbox_name)
+        console.print("Staged source digest mismatch; sandbox deleted.")
+        raise typer.Exit(code=1)
+
+    payload = staged.model_dump(mode="json")
+    payload["sandbox_bundle_sha256"] = sandbox_digest
+    payload["digest_verified"] = True
+    rendered = json.dumps(payload, indent=2, default=str)
     console.print(Panel.fit(rendered, title="Verified Source Staging"))
 
 
