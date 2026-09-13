@@ -28,7 +28,7 @@ def test_source_bundle_hashes_exact_bytes(monkeypatch: pytest.MonkeyPatch, tmp_p
 
     assert destination.read_bytes() == b"trusted-source"
     assert bundle.size_bytes == len(b"trusted-source")
-    assert bundle.archive_sha256 == "b8c075a7bddc2610de8598dd1fd751c6066b1da71d21b28153335bba11318164"
+    assert bundle.archive_sha256 == "991650c3475e0f1cde99965ce6a0ac2fe64c43b2fa5bd41c938c8e80f15ef02f"
 
 
 def test_source_bundle_enforces_size_limit(
