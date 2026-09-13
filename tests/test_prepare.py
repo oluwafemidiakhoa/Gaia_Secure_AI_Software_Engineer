@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 
 from gaia_secure_agent.prepare import prepare_staged_repository
