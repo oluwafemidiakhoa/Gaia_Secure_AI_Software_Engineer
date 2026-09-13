@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 import re
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -13,6 +15,7 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 class PatchArtifact(BaseModel):
+    job_id: UUID
     sandbox_name: str
     sandbox_path: str = "/sandbox/output/changes.patch"
     local_path: Path
@@ -31,9 +34,21 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def write_patch_manifest(artifact: PatchArtifact, path: Path) -> Path:
+    if path.exists():
+        raise RuntimeError(f"patch manifest already exists: {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(artifact.model_dump(mode="json"), indent=2, sort_keys=True, default=str) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 def collect_patch(
     manager: OpenShellSandboxManager,
     *,
+    job_id: UUID,
     sandbox_name: str,
     source_archive: Path,
     expected_source_sha256: str,
@@ -78,6 +93,7 @@ def collect_patch(
         raise RuntimeError("downloaded patch digest does not match sandbox patch digest")
 
     return PatchArtifact(
+        job_id=job_id,
         sandbox_name=sandbox_name,
         sandbox_path=sandbox_path,
         local_path=local_path,
