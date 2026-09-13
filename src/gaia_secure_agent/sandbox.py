@@ -53,24 +53,8 @@ class OpenShellSandboxManager:
         self._validate_name(name)
         if not self.policy_path.is_file():
             raise RuntimeError(f"OpenShell policy missing: {self.policy_path}")
-
         completed = subprocess.run(
-            [
-                "openshell",
-                "sandbox",
-                "create",
-                "--name",
-                name,
-                "--detach",
-                "--output",
-                "json",
-                "--policy",
-                str(self.policy_path),
-                "--cpu",
-                self.cpu,
-                "--memory",
-                self.memory,
-            ],
+            ["openshell", "sandbox", "create", "--name", name, "--detach", "--output", "json", "--policy", str(self.policy_path), "--cpu", self.cpu, "--memory", self.memory],
             capture_output=True,
             text=True,
             timeout=self.command_timeout,
@@ -79,12 +63,10 @@ class OpenShellSandboxManager:
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout).strip()
             raise RuntimeError(f"OpenShell sandbox creation failed: {detail}")
-
         try:
             payload = json.loads(completed.stdout or "{}")
         except json.JSONDecodeError as exc:
             raise RuntimeError("OpenShell returned invalid JSON for sandbox creation") from exc
-
         reported_name = payload.get("name")
         if reported_name and reported_name != name:
             raise RuntimeError("OpenShell returned an unexpected sandbox name")
@@ -95,14 +77,7 @@ class OpenShellSandboxManager:
         destination = self._validate_sandbox_path(destination)
         if not source.is_file():
             raise ValueError(f"upload source must be a regular file: {source}")
-
-        completed = subprocess.run(
-            ["openshell", "sandbox", "upload", name, str(source), destination],
-            capture_output=True,
-            text=True,
-            timeout=max(self.command_timeout, 120),
-            check=False,
-        )
+        completed = subprocess.run(["openshell", "sandbox", "upload", name, str(source), destination], capture_output=True, text=True, timeout=max(self.command_timeout, 120), check=False)
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout).strip()
             raise RuntimeError(f"OpenShell sandbox upload failed: {detail}")
@@ -110,27 +85,10 @@ class OpenShellSandboxManager:
     def sha256(self, handle: SandboxHandle, path: str) -> str:
         name = self._validate_name(handle.name)
         path = self._validate_sandbox_path(path)
-        completed = subprocess.run(
-            [
-                "openshell",
-                "sandbox",
-                "exec",
-                "-n",
-                name,
-                "--no-login-shell",
-                "--",
-                "sha256sum",
-                path,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=self.command_timeout,
-            check=False,
-        )
+        completed = subprocess.run(["openshell", "sandbox", "exec", "-n", name, "--no-login-shell", "--", "sha256sum", path], capture_output=True, text=True, timeout=self.command_timeout, check=False)
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout).strip()
             raise RuntimeError(f"OpenShell sandbox checksum failed: {detail}")
-
         digest = (completed.stdout.strip().split() or [""])[0].lower()
         if not _SHA256.fullmatch(digest):
             raise RuntimeError("OpenShell sandbox checksum returned an invalid digest")
@@ -138,77 +96,18 @@ class OpenShellSandboxManager:
 
     def prepare_repository(self, handle: SandboxHandle) -> None:
         name = self._validate_name(handle.name)
-        create_directory = subprocess.run(
-            [
-                "openshell",
-                "sandbox",
-                "exec",
-                "-n",
-                name,
-                "--no-login-shell",
-                "--",
-                "mkdir",
-                "/sandbox/repository",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=self.command_timeout,
-            check=False,
-        )
+        create_directory = subprocess.run(["openshell", "sandbox", "exec", "-n", name, "--no-login-shell", "--", "mkdir", "/sandbox/repository"], capture_output=True, text=True, timeout=self.command_timeout, check=False)
         if create_directory.returncode != 0:
             detail = (create_directory.stderr or create_directory.stdout).strip()
             raise RuntimeError(f"OpenShell repository directory creation failed: {detail}")
-
-        extraction = subprocess.run(
-            [
-                "openshell",
-                "sandbox",
-                "exec",
-                "-n",
-                name,
-                "--no-login-shell",
-                "--",
-                "tar",
-                "--extract",
-                "--gzip",
-                "--file",
-                "/sandbox/input/source.tar.gz",
-                "--directory",
-                "/sandbox/repository",
-                "--strip-components=1",
-                "--no-same-owner",
-                "--no-same-permissions",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=max(self.command_timeout, 120),
-            check=False,
-        )
+        extraction = subprocess.run(["openshell", "sandbox", "exec", "-n", name, "--no-login-shell", "--", "tar", "--extract", "--gzip", "--file", "/sandbox/input/source.tar.gz", "--directory", "/sandbox/repository", "--strip-components=1", "--no-same-owner", "--no-same-permissions"], capture_output=True, text=True, timeout=max(self.command_timeout, 120), check=False)
         if extraction.returncode != 0:
             detail = (extraction.stderr or extraction.stdout).strip()
             raise RuntimeError(f"OpenShell repository extraction failed: {detail}")
 
     def claude_version(self, handle: SandboxHandle) -> str:
         name = self._validate_name(handle.name)
-        completed = subprocess.run(
-            [
-                "openshell",
-                "sandbox",
-                "exec",
-                "-n",
-                name,
-                "--workdir",
-                "/sandbox/repository",
-                "--no-login-shell",
-                "--",
-                "claude",
-                "--version",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=self.command_timeout,
-            check=False,
-        )
+        completed = subprocess.run(["openshell", "sandbox", "exec", "-n", name, "--workdir", "/sandbox/repository", "--no-login-shell", "--", "claude", "--version"], capture_output=True, text=True, timeout=self.command_timeout, check=False)
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout).strip()
             raise RuntimeError(f"Claude Code version probe failed: {detail}")
@@ -217,15 +116,33 @@ class OpenShellSandboxManager:
             raise RuntimeError("Claude Code version probe returned no output")
         return output
 
-    def delete(self, handle: SandboxHandle) -> None:
+    def claude_headless_canary(self, handle: SandboxHandle) -> bool:
         name = self._validate_name(handle.name)
         completed = subprocess.run(
-            ["openshell", "sandbox", "delete", name],
+            [
+                "openshell", "sandbox", "exec", "-n", name,
+                "--workdir", "/sandbox/repository",
+                "--timeout", "60",
+                "--no-tty",
+                "--no-login-shell",
+                "--",
+                "claude", "--bare", "-p", "--max-turns", "1",
+                "--permission-mode", "dontAsk",
+                "Reply with exactly PROBE_OK. Do not use tools.",
+            ],
             capture_output=True,
             text=True,
-            timeout=self.command_timeout,
+            timeout=max(self.command_timeout, 75),
             check=False,
         )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).strip()
+            raise RuntimeError(f"Claude Code headless canary failed: {detail}")
+        return completed.stdout.strip() == "PROBE_OK"
+
+    def delete(self, handle: SandboxHandle) -> None:
+        name = self._validate_name(handle.name)
+        completed = subprocess.run(["openshell", "sandbox", "delete", name], capture_output=True, text=True, timeout=self.command_timeout, check=False)
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout).strip()
             raise RuntimeError(f"OpenShell sandbox cleanup failed: {detail}")
