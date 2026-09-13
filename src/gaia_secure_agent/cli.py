@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from .acquire import acquire_job_source
-from .agent_probe import parse_claude_version
+from .agent_probe import authorize_claude_execution, parse_claude_version
 from .models import CodingJob
 from .orchestrator import Orchestrator
 from .planner import build_execution_plan
@@ -86,6 +86,18 @@ def probe_agent(sandbox: Annotated[str, typer.Option("--sandbox")], policy: Anno
     output = manager.claude_version(SandboxHandle(name=sandbox))
     probe = parse_claude_version(output)
     console.print(Panel.fit(json.dumps(probe.model_dump(mode="json"), indent=2, default=str), title="Sandbox Coding Agent Probe"))
+
+
+@app.command("verify-agent")
+def verify_agent(sandbox: Annotated[str, typer.Option("--sandbox")], policy: Annotated[Path, typer.Option("--policy")] = Path("policies/openshell-mvp.yaml")) -> None:
+    manager = OpenShellSandboxManager(policy_path=policy)
+    handle = SandboxHandle(name=sandbox)
+    probe = parse_claude_version(manager.claude_version(handle))
+    if not manager.claude_headless_canary(handle):
+        console.print("Claude headless canary returned unexpected output; autonomy remains disabled.")
+        raise typer.Exit(code=1)
+    authorized = authorize_claude_execution(probe, permission_mode_verified=True)
+    console.print(Panel.fit(json.dumps(authorized.model_dump(mode="json"), indent=2, default=str), title="Verified Sandbox Coding Agent"))
 
 
 @app.command()
