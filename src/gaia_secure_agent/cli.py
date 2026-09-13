@@ -14,6 +14,8 @@ from .orchestrator import Orchestrator
 from .planner import build_execution_plan
 from .repository import resolve_github_commit, write_resolution_manifest
 from .runtime import DryRunRuntime, OpenShellRuntime
+from .sandbox import OpenShellSandboxManager
+from .stage import cleanup_staged_source, stage_job_source
 from .worker import inspect_worker
 
 app = typer.Typer(no_args_is_help=True, help="Gaia Secure AI Software Engineer")
@@ -79,6 +81,34 @@ def acquire(
     result = acquire_job_source(job, output_dir)
     rendered = json.dumps(result.model_dump(mode="json"), indent=2, default=str)
     console.print(Panel.fit(rendered, title="Immutable Source Acquisition"))
+
+
+@app.command()
+def stage(
+    repo: Annotated[str, typer.Option("--repo", help="Public GitHub repository URL")],
+    base_branch: Annotated[str, typer.Option("--base-branch")] = "main",
+    output_dir: Annotated[Path, typer.Option("--output-dir")] = Path("staged-source"),
+    policy: Annotated[Path, typer.Option("--policy")] = Path("policies/openshell-mvp.yaml"),
+) -> None:
+    """Create an isolated sandbox and upload verified source artifacts without executing code."""
+
+    job = _build_job(repo, "stage immutable repository source", base_branch, "stager", 180, 1)
+    manager = OpenShellSandboxManager(policy_path=policy)
+    staged = stage_job_source(job, manager, output_dir)
+    rendered = json.dumps(staged.model_dump(mode="json"), indent=2, default=str)
+    console.print(Panel.fit(rendered, title="Verified Source Staging"))
+
+
+@app.command()
+def cleanup(
+    sandbox: Annotated[str, typer.Option("--sandbox", help="Sandbox name returned by sca stage")],
+    policy: Annotated[Path, typer.Option("--policy")] = Path("policies/openshell-mvp.yaml"),
+) -> None:
+    """Delete one staged OpenShell sandbox by its exact validated name."""
+
+    manager = OpenShellSandboxManager(policy_path=policy)
+    cleanup_staged_source(manager, sandbox)
+    console.print(f"Deleted sandbox: {sandbox}")
 
 
 @app.command()
