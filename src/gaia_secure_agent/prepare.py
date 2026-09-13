@@ -13,7 +13,6 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 class PreparedRepository(BaseModel):
     sandbox_name: str
     source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    baseline_commit: str = Field(pattern=r"^[0-9a-f]{40}$")
     repository_path: str = "/sandbox/repository"
     prepared: bool = True
 
@@ -34,9 +33,7 @@ def prepare_staged_repository(
         raise RuntimeError("staged source digest does not match the expected control-plane digest")
 
     manager.prepare_repository(handle)
-    baseline_commit = manager.initialize_git_baseline(handle)
     return PreparedRepository(
         sandbox_name=sandbox_name,
         source_sha256=actual,
-        baseline_commit=baseline_commit,
     )
