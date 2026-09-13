@@ -122,35 +122,45 @@ class OpenShellSandboxManager:
             detail = (extraction.stderr or extraction.stdout).strip()
             raise RuntimeError(f"OpenShell repository extraction failed: {detail}")
 
-    def _git_prefix(self, name: str) -> list[str]:
+    def _git_exec_prefix(self, name: str, workdir: str) -> list[str]:
         return [
             "openshell", "sandbox", "exec", "-n", name,
-            "--workdir", "/sandbox/repository",
+            "--workdir", workdir,
             "--env", "GIT_CONFIG_GLOBAL=/dev/null",
             "--env", "GIT_CONFIG_SYSTEM=/dev/null",
             "--no-login-shell", "--",
         ]
 
-    def initialize_git_baseline(self, handle: SandboxHandle) -> str:
+    def prepare_patch_baseline(self, handle: SandboxHandle, source_path: str) -> str:
         name = self._validate_name(handle.name)
-        prefix = self._git_prefix(name)
+        source_path = self._validate_sandbox_path(source_path)
+        for directory in ("/sandbox/control", "/sandbox/control/baseline"):
+            created = subprocess.run(["openshell", "sandbox", "exec", "-n", name, "--no-login-shell", "--", "mkdir", directory], capture_output=True, text=True, timeout=self.command_timeout, check=False)
+            if created.returncode != 0:
+                detail = (created.stderr or created.stdout).strip()
+                raise RuntimeError(f"Trusted patch baseline directory creation failed: {detail}")
+        extraction = subprocess.run(["openshell", "sandbox", "exec", "-n", name, "--no-login-shell", "--", "tar", "--extract", "--gzip", "--file", source_path, "--directory", "/sandbox/control/baseline", "--strip-components=1", "--no-same-owner", "--no-same-permissions"], capture_output=True, text=True, timeout=max(self.command_timeout, 120), check=False)
+        if extraction.returncode != 0:
+            detail = (extraction.stderr or extraction.stdout).strip()
+            raise RuntimeError(f"Trusted patch baseline extraction failed: {detail}")
+        prefix = self._git_exec_prefix(name, "/sandbox/control/baseline")
         commands = [
             ["git", "init", "--initial-branch=baseline", "."],
             ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.autocrlf=false", "add", "-A", "--", "."],
-            ["git", "-c", "core.hooksPath=/dev/null", "-c", "user.name=Gaia Secure Agent", "-c", "user.email=gaia-secure-agent@localhost", "commit", "--no-gpg-sign", "--no-verify", "-m", "secure baseline"],
+            ["git", "-c", "core.hooksPath=/dev/null", "-c", "user.name=Gaia Secure Agent", "-c", "user.email=gaia-secure-agent@localhost", "commit", "--no-gpg-sign", "--no-verify", "-m", "trusted source baseline"],
         ]
         for command in commands:
             completed = subprocess.run(prefix + command, capture_output=True, text=True, timeout=max(self.command_timeout, 120), check=False)
             if completed.returncode != 0:
                 detail = (completed.stderr or completed.stdout).strip()
-                raise RuntimeError(f"Local Git baseline initialization failed: {detail}")
+                raise RuntimeError(f"Trusted patch baseline Git initialization failed: {detail}")
         rev = subprocess.run(prefix + ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=self.command_timeout, check=False)
         if rev.returncode != 0:
             detail = (rev.stderr or rev.stdout).strip()
-            raise RuntimeError(f"Local Git baseline commit lookup failed: {detail}")
+            raise RuntimeError(f"Trusted patch baseline commit lookup failed: {detail}")
         commit_sha = rev.stdout.strip().lower()
         if not _COMMIT_SHA.fullmatch(commit_sha):
-            raise RuntimeError("Local Git baseline returned an invalid commit SHA")
+            raise RuntimeError("Trusted patch baseline returned an invalid commit SHA")
         return commit_sha
 
     def materialize_patch(self, handle: SandboxHandle) -> str:
@@ -160,12 +170,13 @@ class OpenShellSandboxManager:
         if create_output.returncode != 0:
             detail = (create_output.stderr or create_output.stdout).strip()
             raise RuntimeError(f"Patch output directory creation failed: {detail}")
-        prefix = self._git_prefix(name)
-        intent = subprocess.run(prefix + ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.autocrlf=false", "add", "-N", "--", "."], capture_output=True, text=True, timeout=max(self.command_timeout, 120), check=False)
+        prefix = self._git_exec_prefix(name, "/sandbox/repository")
+        git_base = ["git", "--git-dir=/sandbox/control/baseline/.git", "--work-tree=/sandbox/repository"]
+        intent = subprocess.run(prefix + git_base + ["-c", "core.hooksPath=/dev/null", "-c", "core.autocrlf=false", "add", "-N", "--", "."], capture_output=True, text=True, timeout=max(self.command_timeout, 120), check=False)
         if intent.returncode != 0:
             detail = (intent.stderr or intent.stdout).strip()
             raise RuntimeError(f"Patch untracked-file registration failed: {detail}")
-        diff = subprocess.run(prefix + ["git", "--no-pager", "diff", "--binary", "--no-ext-diff", f"--output={output_path}", "HEAD", "--"], capture_output=True, text=True, timeout=max(self.command_timeout, 120), check=False)
+        diff = subprocess.run(prefix + git_base + ["--no-pager", "diff", "--binary", "--no-ext-diff", f"--output={output_path}", "HEAD", "--"], capture_output=True, text=True, timeout=max(self.command_timeout, 120), check=False)
         if diff.returncode != 0:
             detail = (diff.stderr or diff.stdout).strip()
             raise RuntimeError(f"Patch materialization failed: {detail}")
