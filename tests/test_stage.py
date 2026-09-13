@@ -1,10 +1,10 @@
 from pathlib import Path
-from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
 
 from gaia_secure_agent.acquire import AcquisitionResult
+from gaia_secure_agent.archive_inspect import ArchiveInspection
 from gaia_secure_agent.models import CodingJob
 from gaia_secure_agent.repository import ResolvedRepository
 from gaia_secure_agent.sandbox import SandboxHandle
@@ -41,8 +41,14 @@ def _acquisition(tmp_path: Path) -> AcquisitionResult:
     repository_manifest = output_dir / "repository.json"
     transfer_manifest = output_dir / "transfer.json"
     bundle_manifest = output_dir / "bundle.json"
+    inspection_manifest = output_dir / "archive-inspection.json"
     archive = output_dir / "source.tar.gz"
-    for path in (repository_manifest, transfer_manifest, bundle_manifest):
+    for path in (
+        repository_manifest,
+        transfer_manifest,
+        bundle_manifest,
+        inspection_manifest,
+    ):
         path.write_text("{}\n", encoding="utf-8")
     archive.write_bytes(b"bundle")
 
@@ -68,13 +74,22 @@ def _acquisition(tmp_path: Path) -> AcquisitionResult:
         archive_sha256="c" * 64,
         size_bytes=6,
     )
+    inspection = ArchiveInspection(
+        top_level_root="project-aaaaaaaa",
+        member_count=2,
+        regular_file_count=1,
+        total_uncompressed_bytes=6,
+        manifest_sha256="e" * 64,
+    )
     return AcquisitionResult(
         resolved=resolved,
         transfer=transfer,
         bundle=bundle,
+        inspection=inspection,
         repository_manifest=repository_manifest,
         transfer_manifest=transfer_manifest,
         bundle_manifest=bundle_manifest,
+        inspection_manifest=inspection_manifest,
     )
 
 
