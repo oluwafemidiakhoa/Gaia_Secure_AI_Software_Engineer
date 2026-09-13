@@ -81,6 +81,26 @@ class OpenShellSandboxManager:
             raise RuntimeError("OpenShell returned an unexpected sandbox name")
         return SandboxHandle(name=name)
 
+    def upload(self, handle: SandboxHandle, source: Path, destination: str) -> None:
+        name = self._validate_name(handle.name)
+        if not source.is_file():
+            raise ValueError(f"upload source must be a regular file: {source}")
+        if not destination.startswith("/sandbox/"):
+            raise ValueError("upload destination must stay inside /sandbox")
+        if "/../" in f"{destination}/" or destination.endswith("/.."):
+            raise ValueError("upload destination cannot traverse parent directories")
+
+        completed = subprocess.run(
+            ["openshell", "sandbox", "upload", name, str(source), destination],
+            capture_output=True,
+            text=True,
+            timeout=max(self.command_timeout, 120),
+            check=False,
+        )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).strip()
+            raise RuntimeError(f"OpenShell sandbox upload failed: {detail}")
+
     def delete(self, handle: SandboxHandle) -> None:
         name = self._validate_name(handle.name)
         completed = subprocess.run(
