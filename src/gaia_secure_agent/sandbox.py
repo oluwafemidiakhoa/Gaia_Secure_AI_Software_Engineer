@@ -19,14 +19,7 @@ class SandboxHandle:
 
 
 class OpenShellSandboxManager:
-    def __init__(
-        self,
-        *,
-        policy_path: Path,
-        cpu: str = "2",
-        memory: str = "4Gi",
-        command_timeout: int = 30,
-    ) -> None:
+    def __init__(self, *, policy_path: Path, cpu: str = "2", memory: str = "4Gi", command_timeout: int = 30) -> None:
         self.policy_path = policy_path
         self.cpu = cpu
         self.memory = memory
@@ -56,10 +49,7 @@ class OpenShellSandboxManager:
             raise RuntimeError(f"OpenShell policy missing: {self.policy_path}")
         completed = subprocess.run(
             ["openshell", "sandbox", "create", "--name", name, "--detach", "--output", "json", "--policy", str(self.policy_path), "--cpu", self.cpu, "--memory", self.memory],
-            capture_output=True,
-            text=True,
-            timeout=self.command_timeout,
-            check=False,
+            capture_output=True, text=True, timeout=self.command_timeout, check=False,
         )
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout).strip()
@@ -83,6 +73,20 @@ class OpenShellSandboxManager:
             detail = (completed.stderr or completed.stdout).strip()
             raise RuntimeError(f"OpenShell sandbox upload failed: {detail}")
 
+    def download(self, handle: SandboxHandle, source: str, destination: Path) -> Path:
+        name = self._validate_name(handle.name)
+        source = self._validate_sandbox_path(source)
+        if destination.exists():
+            raise ValueError(f"download destination already exists: {destination}")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        completed = subprocess.run(["openshell", "sandbox", "download", name, source, str(destination)], capture_output=True, text=True, timeout=max(self.command_timeout, 120), check=False)
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).strip()
+            raise RuntimeError(f"OpenShell sandbox download failed: {detail}")
+        if not destination.is_file():
+            raise RuntimeError("OpenShell sandbox download did not produce the expected file")
+        return destination
+
     def sha256(self, handle: SandboxHandle, path: str) -> str:
         name = self._validate_name(handle.name)
         path = self._validate_sandbox_path(path)
@@ -95,6 +99,18 @@ class OpenShellSandboxManager:
             raise RuntimeError("OpenShell sandbox checksum returned an invalid digest")
         return digest
 
+    def file_size(self, handle: SandboxHandle, path: str) -> int:
+        name = self._validate_name(handle.name)
+        path = self._validate_sandbox_path(path)
+        completed = subprocess.run(["openshell", "sandbox", "exec", "-n", name, "--no-login-shell", "--", "wc", "-c", path], capture_output=True, text=True, timeout=self.command_timeout, check=False)
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).strip()
+            raise RuntimeError(f"OpenShell sandbox file-size check failed: {detail}")
+        token = (completed.stdout.strip().split() or [""])[0]
+        if not token.isdigit():
+            raise RuntimeError("OpenShell sandbox file-size check returned invalid output")
+        return int(token)
+
     def prepare_repository(self, handle: SandboxHandle) -> None:
         name = self._validate_name(handle.name)
         create_directory = subprocess.run(["openshell", "sandbox", "exec", "-n", name, "--no-login-shell", "--", "mkdir", "/sandbox/repository"], capture_output=True, text=True, timeout=self.command_timeout, check=False)
@@ -106,44 +122,29 @@ class OpenShellSandboxManager:
             detail = (extraction.stderr or extraction.stdout).strip()
             raise RuntimeError(f"OpenShell repository extraction failed: {detail}")
 
-    def initialize_git_baseline(self, handle: SandboxHandle) -> str:
-        name = self._validate_name(handle.name)
-        prefix = [
+    def _git_prefix(self, name: str) -> list[str]:
+        return [
             "openshell", "sandbox", "exec", "-n", name,
             "--workdir", "/sandbox/repository",
             "--env", "GIT_CONFIG_GLOBAL=/dev/null",
             "--env", "GIT_CONFIG_SYSTEM=/dev/null",
             "--no-login-shell", "--",
         ]
+
+    def initialize_git_baseline(self, handle: SandboxHandle) -> str:
+        name = self._validate_name(handle.name)
+        prefix = self._git_prefix(name)
         commands = [
             ["git", "init", "--initial-branch=baseline", "."],
             ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.autocrlf=false", "add", "-A", "--", "."],
-            [
-                "git", "-c", "core.hooksPath=/dev/null",
-                "-c", "user.name=Gaia Secure Agent",
-                "-c", "user.email=gaia-secure-agent@localhost",
-                "commit", "--no-gpg-sign", "--no-verify", "-m", "secure baseline",
-            ],
+            ["git", "-c", "core.hooksPath=/dev/null", "-c", "user.name=Gaia Secure Agent", "-c", "user.email=gaia-secure-agent@localhost", "commit", "--no-gpg-sign", "--no-verify", "-m", "secure baseline"],
         ]
         for command in commands:
-            completed = subprocess.run(
-                prefix + command,
-                capture_output=True,
-                text=True,
-                timeout=max(self.command_timeout, 120),
-                check=False,
-            )
+            completed = subprocess.run(prefix + command, capture_output=True, text=True, timeout=max(self.command_timeout, 120), check=False)
             if completed.returncode != 0:
                 detail = (completed.stderr or completed.stdout).strip()
                 raise RuntimeError(f"Local Git baseline initialization failed: {detail}")
-
-        rev = subprocess.run(
-            prefix + ["git", "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=self.command_timeout,
-            check=False,
-        )
+        rev = subprocess.run(prefix + ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=self.command_timeout, check=False)
         if rev.returncode != 0:
             detail = (rev.stderr or rev.stdout).strip()
             raise RuntimeError(f"Local Git baseline commit lookup failed: {detail}")
@@ -151,6 +152,24 @@ class OpenShellSandboxManager:
         if not _COMMIT_SHA.fullmatch(commit_sha):
             raise RuntimeError("Local Git baseline returned an invalid commit SHA")
         return commit_sha
+
+    def materialize_patch(self, handle: SandboxHandle) -> str:
+        name = self._validate_name(handle.name)
+        output_path = "/sandbox/output/changes.patch"
+        create_output = subprocess.run(["openshell", "sandbox", "exec", "-n", name, "--no-login-shell", "--", "mkdir", "/sandbox/output"], capture_output=True, text=True, timeout=self.command_timeout, check=False)
+        if create_output.returncode != 0:
+            detail = (create_output.stderr or create_output.stdout).strip()
+            raise RuntimeError(f"Patch output directory creation failed: {detail}")
+        prefix = self._git_prefix(name)
+        intent = subprocess.run(prefix + ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.autocrlf=false", "add", "-N", "--", "."], capture_output=True, text=True, timeout=max(self.command_timeout, 120), check=False)
+        if intent.returncode != 0:
+            detail = (intent.stderr or intent.stdout).strip()
+            raise RuntimeError(f"Patch untracked-file registration failed: {detail}")
+        diff = subprocess.run(prefix + ["git", "--no-pager", "diff", "--binary", "--no-ext-diff", f"--output={output_path}", "HEAD", "--"], capture_output=True, text=True, timeout=max(self.command_timeout, 120), check=False)
+        if diff.returncode != 0:
+            detail = (diff.stderr or diff.stdout).strip()
+            raise RuntimeError(f"Patch materialization failed: {detail}")
+        return output_path
 
     def claude_version(self, handle: SandboxHandle) -> str:
         name = self._validate_name(handle.name)
@@ -166,21 +185,8 @@ class OpenShellSandboxManager:
     def claude_headless_canary(self, handle: SandboxHandle) -> bool:
         name = self._validate_name(handle.name)
         completed = subprocess.run(
-            [
-                "openshell", "sandbox", "exec", "-n", name,
-                "--workdir", "/sandbox/repository",
-                "--timeout", "60",
-                "--no-tty",
-                "--no-login-shell",
-                "--",
-                "claude", "--bare", "-p", "--max-turns", "1",
-                "--permission-mode", "dontAsk",
-                "Reply with exactly PROBE_OK. Do not use tools.",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=max(self.command_timeout, 75),
-            check=False,
+            ["openshell", "sandbox", "exec", "-n", name, "--workdir", "/sandbox/repository", "--timeout", "60", "--no-tty", "--no-login-shell", "--", "claude", "--bare", "-p", "--max-turns", "1", "--permission-mode", "dontAsk", "Reply with exactly PROBE_OK. Do not use tools."],
+            capture_output=True, text=True, timeout=max(self.command_timeout, 75), check=False,
         )
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout).strip()
