@@ -15,7 +15,7 @@ from .agent_run import run_coding_agent
 from .approval import ApprovalDecision
 from .models import CodingJob
 from .orchestrator import Orchestrator
-from .patch import collect_patch
+from .patch import collect_patch, write_patch_manifest
 from .planner import build_execution_plan
 from .prepare import prepare_staged_repository
 from .repository import resolve_github_commit, write_resolution_manifest
@@ -130,6 +130,7 @@ def execute_agent(
 
 @app.command("collect-patch")
 def collect_patch_command(
+    job_id: Annotated[str, typer.Option("--job-id")],
     sandbox: Annotated[str, typer.Option("--sandbox")],
     source_archive: Annotated[Path, typer.Option("--source-archive")],
     source_sha256: Annotated[str, typer.Option("--source-sha256")],
@@ -139,16 +140,22 @@ def collect_patch_command(
 ) -> None:
     """Reconstruct a trusted post-agent baseline and collect a verified bounded patch."""
 
+    try:
+        parsed_job_id = UUID(job_id)
+    except ValueError as exc:
+        raise typer.BadParameter("job id must be a valid UUID", param_hint="--job-id") from exc
     manager = OpenShellSandboxManager(policy_path=policy)
     try:
         artifact = collect_patch(
             manager,
+            job_id=parsed_job_id,
             sandbox_name=sandbox,
             source_archive=source_archive,
             expected_source_sha256=source_sha256,
             output_dir=output_dir,
             max_bytes=max_bytes,
         )
+        write_patch_manifest(artifact, output_dir / "patch.json")
     except (RuntimeError, ValueError) as exc:
         console.print(f"Patch collection refused: {exc}")
         raise typer.Exit(code=1) from exc
@@ -175,13 +182,7 @@ def approve_patch(
     except ValueError as exc:
         raise typer.BadParameter("decision must be 'approve' or 'reject'", param_hint="--decision") from exc
     try:
-        record = create_approval_record(
-            job_id=parsed_job_id,
-            patch_sha256=patch_sha256,
-            actor=actor,
-            decision=parsed_decision,
-            note=note,
-        )
+        record = create_approval_record(job_id=parsed_job_id, patch_sha256=patch_sha256, actor=actor, decision=parsed_decision, note=note)
         write_approval_record(record, output)
     except (RuntimeError, ValueError) as exc:
         console.print(f"Approval record refused: {exc}")
