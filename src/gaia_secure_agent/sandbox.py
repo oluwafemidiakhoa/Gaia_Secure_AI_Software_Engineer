@@ -188,6 +188,35 @@ class OpenShellSandboxManager:
             detail = (extraction.stderr or extraction.stdout).strip()
             raise RuntimeError(f"OpenShell repository extraction failed: {detail}")
 
+    def claude_version(self, handle: SandboxHandle) -> str:
+        name = self._validate_name(handle.name)
+        completed = subprocess.run(
+            [
+                "openshell",
+                "sandbox",
+                "exec",
+                "-n",
+                name,
+                "--workdir",
+                "/sandbox/repository",
+                "--no-login-shell",
+                "--",
+                "claude",
+                "--version",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=self.command_timeout,
+            check=False,
+        )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).strip()
+            raise RuntimeError(f"Claude Code version probe failed: {detail}")
+        output = (completed.stdout or completed.stderr).strip()
+        if not output:
+            raise RuntimeError("Claude Code version probe returned no output")
+        return output
+
     def delete(self, handle: SandboxHandle) -> None:
         name = self._validate_name(handle.name)
         completed = subprocess.run(
