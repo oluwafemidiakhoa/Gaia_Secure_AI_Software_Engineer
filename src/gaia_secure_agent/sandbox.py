@@ -136,6 +136,58 @@ class OpenShellSandboxManager:
             raise RuntimeError("OpenShell sandbox checksum returned an invalid digest")
         return digest
 
+    def prepare_repository(self, handle: SandboxHandle) -> None:
+        name = self._validate_name(handle.name)
+        create_directory = subprocess.run(
+            [
+                "openshell",
+                "sandbox",
+                "exec",
+                "-n",
+                name,
+                "--no-login-shell",
+                "--",
+                "mkdir",
+                "/sandbox/repository",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=self.command_timeout,
+            check=False,
+        )
+        if create_directory.returncode != 0:
+            detail = (create_directory.stderr or create_directory.stdout).strip()
+            raise RuntimeError(f"OpenShell repository directory creation failed: {detail}")
+
+        extraction = subprocess.run(
+            [
+                "openshell",
+                "sandbox",
+                "exec",
+                "-n",
+                name,
+                "--no-login-shell",
+                "--",
+                "tar",
+                "--extract",
+                "--gzip",
+                "--file",
+                "/sandbox/input/source.tar.gz",
+                "--directory",
+                "/sandbox/repository",
+                "--strip-components=1",
+                "--no-same-owner",
+                "--no-same-permissions",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=max(self.command_timeout, 120),
+            check=False,
+        )
+        if extraction.returncode != 0:
+            detail = (extraction.stderr or extraction.stdout).strip()
+            raise RuntimeError(f"OpenShell repository extraction failed: {detail}")
+
     def delete(self, handle: SandboxHandle) -> None:
         name = self._validate_name(handle.name)
         completed = subprocess.run(
