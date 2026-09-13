@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from pathlib import PurePosixPath
+import re
 
 from pydantic import BaseModel, Field, field_validator
 
