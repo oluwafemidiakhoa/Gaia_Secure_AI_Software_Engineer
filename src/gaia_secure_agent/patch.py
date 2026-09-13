@@ -51,6 +51,8 @@ def collect_patch(
         raise RuntimeError("control-plane source archive digest changed before patch collection")
 
     handle = SandboxHandle(name=sandbox_name)
+    manager.reset_post_agent_control(handle)
+
     trusted_source_path = "/sandbox/input/original-after-agent.tar.gz"
     manager.upload(handle, source_archive, trusted_source_path)
     if manager.sha256(handle, trusted_source_path) != expected_source:
