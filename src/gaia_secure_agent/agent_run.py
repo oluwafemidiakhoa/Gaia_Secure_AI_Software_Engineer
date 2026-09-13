@@ -30,6 +30,11 @@ def run_coding_agent(
     sandbox_name: str,
     output_dir: Path,
 ) -> AgentRunResult:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "agent-output.txt"
+    if output_path.exists():
+        raise RuntimeError(f"agent output already exists: {output_path}")
+
     contract = build_agent_contract(job)
     if contract.agent is not AgentKind.CLAUDE:
         raise RuntimeError("v1 execution currently supports Claude Code only")
@@ -53,12 +58,7 @@ def run_coding_agent(
     if len(encoded) > 1_000_000:
         raise RuntimeError("agent output exceeds the control-plane size limit")
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "agent-output.txt"
-    if output_path.exists():
-        raise RuntimeError(f"agent output already exists: {output_path}")
     output_path.write_bytes(encoded)
-
     return AgentRunResult(
         sandbox_name=sandbox_name,
         agent=contract.agent,
