@@ -1,0 +1,19 @@
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /lib
+    - /lib64
+    - /bin
+    - /etc
+  read_write:
+    - /tmp
+
+landlock:
+  compatibility: best_effort
+
+# Job-specific egress is intentionally absent. Add only the exact endpoints required by a job.
+network_policies: {}
+network_middlewares: {}
