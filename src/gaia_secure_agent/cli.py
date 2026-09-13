@@ -11,6 +11,7 @@ from rich.panel import Panel
 from .models import CodingJob
 from .orchestrator import Orchestrator
 from .planner import build_execution_plan
+from .repository import resolve_github_commit, write_resolution_manifest
 from .runtime import DryRunRuntime, OpenShellRuntime
 from .worker import inspect_worker
 
@@ -48,6 +49,21 @@ def doctor(
     console.print(Panel.fit(rendered, title="Secure Worker Readiness"))
     if not report.ready:
         raise typer.Exit(code=1)
+
+
+@app.command()
+def resolve(
+    repo: Annotated[str, typer.Option("--repo", help="GitHub repository URL")],
+    base_branch: Annotated[str, typer.Option("--base-branch")] = "main",
+    output: Annotated[Path, typer.Option("--output")] = Path("repository.json"),
+) -> None:
+    """Resolve a mutable GitHub branch to an immutable commit and write a manifest."""
+
+    job = _build_job(repo, "resolve immutable repository base", base_branch, "resolver", 60, 1)
+    resolved = resolve_github_commit(job)
+    write_resolution_manifest(resolved, output)
+    rendered = json.dumps(resolved.model_dump(mode="json"), indent=2, default=str)
+    console.print(Panel.fit(rendered, title="Immutable Repository Resolution"))
 
 
 @app.command()
