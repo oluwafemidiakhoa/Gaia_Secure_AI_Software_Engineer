@@ -10,6 +10,7 @@ from uuid import UUID
 
 _SANDBOX_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
 @dataclass(frozen=True)
@@ -104,6 +105,52 @@ class OpenShellSandboxManager:
         if extraction.returncode != 0:
             detail = (extraction.stderr or extraction.stdout).strip()
             raise RuntimeError(f"OpenShell repository extraction failed: {detail}")
+
+    def initialize_git_baseline(self, handle: SandboxHandle) -> str:
+        name = self._validate_name(handle.name)
+        prefix = [
+            "openshell", "sandbox", "exec", "-n", name,
+            "--workdir", "/sandbox/repository",
+            "--env", "GIT_CONFIG_GLOBAL=/dev/null",
+            "--env", "GIT_CONFIG_SYSTEM=/dev/null",
+            "--no-login-shell", "--",
+        ]
+        commands = [
+            ["git", "init", "--initial-branch=baseline", "."],
+            ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.autocrlf=false", "add", "-A", "--", "."],
+            [
+                "git", "-c", "core.hooksPath=/dev/null",
+                "-c", "user.name=Gaia Secure Agent",
+                "-c", "user.email=gaia-secure-agent@localhost",
+                "commit", "--no-gpg-sign", "--no-verify", "-m", "secure baseline",
+            ],
+        ]
+        for command in commands:
+            completed = subprocess.run(
+                prefix + command,
+                capture_output=True,
+                text=True,
+                timeout=max(self.command_timeout, 120),
+                check=False,
+            )
+            if completed.returncode != 0:
+                detail = (completed.stderr or completed.stdout).strip()
+                raise RuntimeError(f"Local Git baseline initialization failed: {detail}")
+
+        rev = subprocess.run(
+            prefix + ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=self.command_timeout,
+            check=False,
+        )
+        if rev.returncode != 0:
+            detail = (rev.stderr or rev.stdout).strip()
+            raise RuntimeError(f"Local Git baseline commit lookup failed: {detail}")
+        commit_sha = rev.stdout.strip().lower()
+        if not _COMMIT_SHA.fullmatch(commit_sha):
+            raise RuntimeError("Local Git baseline returned an invalid commit SHA")
+        return commit_sha
 
     def claude_version(self, handle: SandboxHandle) -> str:
         name = self._validate_name(handle.name)
