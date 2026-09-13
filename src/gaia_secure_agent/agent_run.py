@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -12,6 +13,7 @@ from .sandbox import OpenShellSandboxManager, SandboxHandle
 
 
 class AgentRunResult(BaseModel):
+    job_id: UUID
     sandbox_name: str
     agent: AgentKind
     agent_version: str
@@ -60,6 +62,7 @@ def run_coding_agent(
 
     output_path.write_bytes(encoded)
     return AgentRunResult(
+        job_id=job.id,
         sandbox_name=sandbox_name,
         agent=contract.agent,
         agent_version=authorized.version,
