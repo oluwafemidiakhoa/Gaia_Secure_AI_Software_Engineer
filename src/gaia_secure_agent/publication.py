@@ -49,6 +49,29 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _artifact_root(patch_manifest: Path) -> Path:
+    parent = patch_manifest.parent
+    if parent.name == "patch":
+        return parent.parent
+    return parent
+
+
+def _resolve_evidence_paths(
+    *,
+    patch_manifest: Path,
+    evidence_manifest: Path | None,
+    run_manifest: Path | None,
+) -> tuple[Path, Path]:
+    root = _artifact_root(patch_manifest)
+    evidence_path = evidence_manifest or root / "evidence.json"
+    run_path = run_manifest or root / "run.json"
+    if not evidence_path.is_file():
+        raise ValueError(f"required evidence receipt does not exist: {evidence_path}")
+    if not run_path.is_file():
+        raise ValueError(f"required run manifest does not exist: {run_path}")
+    return evidence_path, run_path
+
+
 def _assert_evidence_matches_artifacts(
     *,
     evidence: EvidenceReceipt,
@@ -72,16 +95,21 @@ def verify_publication(
     bundle_manifest: Path,
     patch_manifest: Path,
     approval_manifest: Path,
-    evidence_manifest: Path,
-    run_manifest: Path,
+    evidence_manifest: Path | None = None,
+    run_manifest: Path | None = None,
 ) -> PublicationPlan:
     repository = _load_model(repository_manifest, ResolvedRepository)
     bundle = _load_model(bundle_manifest, SourceBundle)
     patch = _load_model(patch_manifest, PatchArtifact)
     approval = _load_model(approval_manifest, ApprovalRecord)
+    evidence_path, run_path = _resolve_evidence_paths(
+        patch_manifest=patch_manifest,
+        evidence_manifest=evidence_manifest,
+        run_manifest=run_manifest,
+    )
     evidence = verify_evidence_receipt(
-        evidence_manifest,
-        run_manifest_path=run_manifest,
+        evidence_path,
+        run_manifest_path=run_path,
     )
 
     if bundle.commit_sha != repository.commit_sha:
