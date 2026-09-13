@@ -123,13 +123,7 @@ class OpenShellSandboxManager:
             raise RuntimeError(f"OpenShell repository extraction failed: {detail}")
 
     def _git_exec_prefix(self, name: str, workdir: str) -> list[str]:
-        return [
-            "openshell", "sandbox", "exec", "-n", name,
-            "--workdir", workdir,
-            "--env", "GIT_CONFIG_GLOBAL=/dev/null",
-            "--env", "GIT_CONFIG_SYSTEM=/dev/null",
-            "--no-login-shell", "--",
-        ]
+        return ["openshell", "sandbox", "exec", "-n", name, "--workdir", workdir, "--env", "GIT_CONFIG_GLOBAL=/dev/null", "--env", "GIT_CONFIG_SYSTEM=/dev/null", "--no-login-shell", "--"]
 
     def prepare_patch_baseline(self, handle: SandboxHandle, source_path: str) -> str:
         name = self._validate_name(handle.name)
@@ -182,9 +176,20 @@ class OpenShellSandboxManager:
             raise RuntimeError(f"Patch materialization failed: {detail}")
         return output_path
 
+    def _claude_prefix(self, name: str, timeout_seconds: int) -> list[str]:
+        return [
+            "openshell", "sandbox", "exec", "-n", name,
+            "--workdir", "/sandbox/repository",
+            "--timeout", str(timeout_seconds),
+            "--no-tty",
+            "--env", "ANTHROPIC_BASE_URL=https://inference.local",
+            "--env", "ANTHROPIC_API_KEY=unused",
+            "--no-login-shell", "--",
+        ]
+
     def claude_version(self, handle: SandboxHandle) -> str:
         name = self._validate_name(handle.name)
-        completed = subprocess.run(["openshell", "sandbox", "exec", "-n", name, "--workdir", "/sandbox/repository", "--no-login-shell", "--", "claude", "--version"], capture_output=True, text=True, timeout=self.command_timeout, check=False)
+        completed = subprocess.run(self._claude_prefix(name, 30) + ["claude", "--version"], capture_output=True, text=True, timeout=max(self.command_timeout, 45), check=False)
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout).strip()
             raise RuntimeError(f"Claude Code version probe failed: {detail}")
@@ -195,14 +200,30 @@ class OpenShellSandboxManager:
 
     def claude_headless_canary(self, handle: SandboxHandle) -> bool:
         name = self._validate_name(handle.name)
-        completed = subprocess.run(
-            ["openshell", "sandbox", "exec", "-n", name, "--workdir", "/sandbox/repository", "--timeout", "60", "--no-tty", "--no-login-shell", "--", "claude", "--bare", "-p", "--max-turns", "1", "--permission-mode", "dontAsk", "Reply with exactly PROBE_OK. Do not use tools."],
-            capture_output=True, text=True, timeout=max(self.command_timeout, 75), check=False,
-        )
+        command = ["claude", "--bare", "-p", "--max-turns", "1", "--permission-mode", "dontAsk", "Reply with exactly PROBE_OK. Do not use tools."]
+        completed = subprocess.run(self._claude_prefix(name, 60) + command, capture_output=True, text=True, timeout=max(self.command_timeout, 75), check=False)
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout).strip()
             raise RuntimeError(f"Claude Code headless canary failed: {detail}")
         return completed.stdout.strip() == "PROBE_OK"
+
+    def run_claude_task(self, handle: SandboxHandle, *, instructions: str, max_turns: int, timeout_seconds: int) -> str:
+        name = self._validate_name(handle.name)
+        if not 1 <= max_turns <= 100:
+            raise ValueError("Claude max_turns must be between 1 and 100")
+        if not 30 <= timeout_seconds <= 7200:
+            raise ValueError("Claude timeout must be between 30 and 7200 seconds")
+        if not 3 <= len(instructions) <= 20_000:
+            raise ValueError("Claude instructions length is outside the allowed range")
+        command = ["claude", "--bare", "-p", "--max-turns", str(max_turns), "--permission-mode", "dontAsk", instructions]
+        completed = subprocess.run(self._claude_prefix(name, timeout_seconds) + command, capture_output=True, text=True, timeout=timeout_seconds + 30, check=False)
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).strip()
+            raise RuntimeError(f"Claude coding task failed: {detail[-4000:]}")
+        output = completed.stdout.strip()
+        if len(output.encode("utf-8")) > 1_000_000:
+            raise RuntimeError("Claude coding task output exceeded the control-plane limit")
+        return output
 
     def delete(self, handle: SandboxHandle) -> None:
         name = self._validate_name(handle.name)
