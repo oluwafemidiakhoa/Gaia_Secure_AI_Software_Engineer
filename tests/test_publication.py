@@ -24,6 +24,11 @@ def _write(path: Path, model) -> Path:
 
 
 def _fixtures(tmp_path: Path):
+    source_path = tmp_path / "source.tar.gz"
+    source_bytes = b"trusted-source-archive"
+    source_path.write_bytes(source_bytes)
+    source_sha = hashlib.sha256(source_bytes).hexdigest()
+
     patch_path = tmp_path / "changes.patch"
     patch_bytes = b"diff --git a/a.txt b/a.txt\n"
     patch_path.write_bytes(patch_bytes)
@@ -39,15 +44,15 @@ def _fixtures(tmp_path: Path):
     )
     bundle = SourceBundle(
         commit_sha="a" * 40,
-        archive_path=tmp_path / "source.tar.gz",
-        archive_sha256="c" * 64,
-        size_bytes=123,
+        archive_path=source_path,
+        archive_sha256=source_sha,
+        size_bytes=len(source_bytes),
     )
     patch = PatchArtifact(
         job_id=JOB_ID,
         sandbox_name="gaia-test",
         local_path=patch_path,
-        source_sha256="c" * 64,
+        source_sha256=source_sha,
         baseline_commit="d" * 40,
         sha256=patch_sha,
         size_bytes=len(patch_bytes),
@@ -66,11 +71,12 @@ def _fixtures(tmp_path: Path):
         _write(tmp_path / "patch.json", patch),
         _write(tmp_path / "approval.json", approval),
         patch_path,
+        source_path,
     )
 
 
 def test_publication_requires_all_matching_evidence(tmp_path: Path) -> None:
-    repository, bundle, patch, approval, _ = _fixtures(tmp_path)
+    repository, bundle, patch, approval, _, _ = _fixtures(tmp_path)
 
     plan = verify_publication(
         repository_manifest=repository,
@@ -87,7 +93,7 @@ def test_publication_requires_all_matching_evidence(tmp_path: Path) -> None:
 
 
 def test_publication_refuses_patch_changed_after_approval(tmp_path: Path) -> None:
-    repository, bundle, patch, approval, patch_path = _fixtures(tmp_path)
+    repository, bundle, patch, approval, patch_path, _ = _fixtures(tmp_path)
     patch_path.write_bytes(b"tampered")
 
     with pytest.raises(PermissionError, match="size changed|digest changed"):
@@ -99,8 +105,21 @@ def test_publication_refuses_patch_changed_after_approval(tmp_path: Path) -> Non
         )
 
 
+def test_publication_refuses_source_changed_after_acquisition(tmp_path: Path) -> None:
+    repository, bundle, patch, approval, _, source_path = _fixtures(tmp_path)
+    source_path.write_bytes(b"tampered-source")
+
+    with pytest.raises(PermissionError, match="size changed|digest changed"):
+        verify_publication(
+            repository_manifest=repository,
+            bundle_manifest=bundle,
+            patch_manifest=patch,
+            approval_manifest=approval,
+        )
+
+
 def test_publication_refuses_wrong_source_bundle(tmp_path: Path) -> None:
-    repository, bundle_path, patch, approval, _ = _fixtures(tmp_path)
+    repository, bundle_path, patch, approval, _, _ = _fixtures(tmp_path)
     payload = json.loads(bundle_path.read_text(encoding="utf-8"))
     payload["commit_sha"] = "e" * 40
     bundle_path.write_text(json.dumps(payload), encoding="utf-8")
@@ -115,7 +134,7 @@ def test_publication_refuses_wrong_source_bundle(tmp_path: Path) -> None:
 
 
 def test_publication_refuses_rejected_patch(tmp_path: Path) -> None:
-    repository, bundle, patch, approval_path, _ = _fixtures(tmp_path)
+    repository, bundle, patch, approval_path, _, _ = _fixtures(tmp_path)
     payload = json.loads(approval_path.read_text(encoding="utf-8"))
     payload["decision"] = "reject"
     approval_path.write_text(json.dumps(payload), encoding="utf-8")
