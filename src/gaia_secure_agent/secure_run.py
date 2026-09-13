@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from .agent_run import AgentRunResult, run_coding_agent
+from .evidence import EvidenceReceipt, build_evidence_receipt, write_evidence_receipt
 from .models import CodingJob
 from .patch import PatchArtifact, collect_patch, write_patch_manifest
 from .prepare import PreparedRepository, prepare_staged_repository
@@ -22,6 +23,8 @@ class SecureRunResult(BaseModel):
     agent: AgentRunResult
     patch: PatchArtifact
     run_manifest: Path
+    evidence: EvidenceReceipt
+    evidence_manifest: Path
     human_approval_required: bool = True
     github_write_performed: bool = False
     sandbox_deleted: bool = True
@@ -89,6 +92,15 @@ def secure_autonomous_run(
             "github_write_performed": False,
         }
         run_manifest = _write_run_manifest(manifest_payload, output_dir / "run.json")
+        evidence = build_evidence_receipt(
+            job_id=job.id,
+            source_commit=staged.acquisition.resolved.commit_sha,
+            source_sha256=expected_source,
+            agent_output_sha256=agent.output_sha256,
+            patch_sha256=patch.sha256,
+            run_manifest_path=run_manifest,
+        )
+        evidence_manifest = write_evidence_receipt(evidence, output_dir / "evidence.json")
     finally:
         if staged is not None:
             manager.delete(SandboxHandle(name=staged.sandbox_name))
@@ -101,4 +113,6 @@ def secure_autonomous_run(
         agent=agent,
         patch=patch,
         run_manifest=run_manifest,
+        evidence=evidence,
+        evidence_manifest=evidence_manifest,
     )
