@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from .approval import ApprovalRecord, assert_publish_approved
+from .evidence import EvidenceReceipt, verify_evidence_receipt
 from .patch import PatchArtifact
 from .repository import ResolvedRepository
 from .source_bundle import SourceBundle
@@ -21,10 +22,12 @@ class PublicationPlan(BaseModel):
     base_commit: str = Field(pattern=r"^[0-9a-f]{40}$")
     source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     patch_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     patch_path: Path
     approved_by: str
     approved_at: datetime
     human_approval_verified: bool = True
+    evidence_verified: bool = True
     agent_github_write_allowed: bool = False
 
 
@@ -46,17 +49,40 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _assert_evidence_matches_artifacts(
+    *,
+    evidence: EvidenceReceipt,
+    repository: ResolvedRepository,
+    bundle: SourceBundle,
+    patch: PatchArtifact,
+) -> None:
+    if evidence.job_id != patch.job_id:
+        raise PermissionError("evidence receipt belongs to a different coding job")
+    if evidence.source_commit != repository.commit_sha:
+        raise PermissionError("evidence source commit does not match repository resolution")
+    if evidence.source_sha256 != bundle.archive_sha256:
+        raise PermissionError("evidence source digest does not match acquired source bundle")
+    if evidence.patch_sha256 != patch.sha256:
+        raise PermissionError("evidence patch digest does not match verified patch")
+
+
 def verify_publication(
     *,
     repository_manifest: Path,
     bundle_manifest: Path,
     patch_manifest: Path,
     approval_manifest: Path,
+    evidence_manifest: Path,
+    run_manifest: Path,
 ) -> PublicationPlan:
     repository = _load_model(repository_manifest, ResolvedRepository)
     bundle = _load_model(bundle_manifest, SourceBundle)
     patch = _load_model(patch_manifest, PatchArtifact)
     approval = _load_model(approval_manifest, ApprovalRecord)
+    evidence = verify_evidence_receipt(
+        evidence_manifest,
+        run_manifest_path=run_manifest,
+    )
 
     if bundle.commit_sha != repository.commit_sha:
         raise PermissionError("source bundle commit does not match repository resolution")
@@ -78,6 +104,13 @@ def verify_publication(
     if _sha256(patch.local_path) != patch.sha256:
         raise PermissionError("patch file digest changed after collection")
 
+    _assert_evidence_matches_artifacts(
+        evidence=evidence,
+        repository=repository,
+        bundle=bundle,
+        patch=patch,
+    )
+
     assert_publish_approved(
         job_id=patch.job_id,
         patch_sha256=patch.sha256,
@@ -91,6 +124,7 @@ def verify_publication(
         base_commit=repository.commit_sha,
         source_sha256=bundle.archive_sha256,
         patch_sha256=patch.sha256,
+        evidence_sha256=evidence.evidence_sha256,
         patch_path=patch.local_path,
         approved_by=approval.actor,
         approved_at=approval.decided_at,
