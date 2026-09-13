@@ -9,6 +9,7 @@ from uuid import UUID
 
 
 _SANDBOX_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,14 @@ class OpenShellSandboxManager:
         if not _SANDBOX_NAME.fullmatch(name):
             raise ValueError("sandbox name contains unsupported characters")
         return name
+
+    @staticmethod
+    def _validate_sandbox_path(path: str) -> str:
+        if not path.startswith("/sandbox/"):
+            raise ValueError("sandbox path must stay inside /sandbox")
+        if "/../" in f"{path}/" or path.endswith("/.."):
+            raise ValueError("sandbox path cannot traverse parent directories")
+        return path
 
     def create(self, name: str) -> SandboxHandle:
         self._validate_name(name)
@@ -83,12 +92,9 @@ class OpenShellSandboxManager:
 
     def upload(self, handle: SandboxHandle, source: Path, destination: str) -> None:
         name = self._validate_name(handle.name)
+        destination = self._validate_sandbox_path(destination)
         if not source.is_file():
             raise ValueError(f"upload source must be a regular file: {source}")
-        if not destination.startswith("/sandbox/"):
-            raise ValueError("upload destination must stay inside /sandbox")
-        if "/../" in f"{destination}/" or destination.endswith("/.."):
-            raise ValueError("upload destination cannot traverse parent directories")
 
         completed = subprocess.run(
             ["openshell", "sandbox", "upload", name, str(source), destination],
@@ -100,6 +106,35 @@ class OpenShellSandboxManager:
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout).strip()
             raise RuntimeError(f"OpenShell sandbox upload failed: {detail}")
+
+    def sha256(self, handle: SandboxHandle, path: str) -> str:
+        name = self._validate_name(handle.name)
+        path = self._validate_sandbox_path(path)
+        completed = subprocess.run(
+            [
+                "openshell",
+                "sandbox",
+                "exec",
+                "-n",
+                name,
+                "--no-login-shell",
+                "--",
+                "sha256sum",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=self.command_timeout,
+            check=False,
+        )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).strip()
+            raise RuntimeError(f"OpenShell sandbox checksum failed: {detail}")
+
+        digest = (completed.stdout.strip().split() or [""])[0].lower()
+        if not _SHA256.fullmatch(digest):
+            raise RuntimeError("OpenShell sandbox checksum returned an invalid digest")
+        return digest
 
     def delete(self, handle: SandboxHandle) -> None:
         name = self._validate_name(handle.name)
