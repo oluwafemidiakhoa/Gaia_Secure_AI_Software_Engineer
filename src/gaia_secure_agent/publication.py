@@ -60,6 +60,12 @@ def verify_publication(
 
     if bundle.commit_sha != repository.commit_sha:
         raise PermissionError("source bundle commit does not match repository resolution")
+    if not bundle.archive_path.is_file():
+        raise PermissionError("acquired source archive is missing")
+    if bundle.archive_path.stat().st_size != bundle.size_bytes:
+        raise PermissionError("acquired source archive size changed after acquisition")
+    if _sha256(bundle.archive_path) != bundle.archive_sha256:
+        raise PermissionError("acquired source archive digest changed after acquisition")
     if patch.source_sha256 != bundle.archive_sha256:
         raise PermissionError("patch source digest does not match acquired source bundle")
     if not patch.has_changes or patch.size_bytes <= 0:
