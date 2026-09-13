@@ -34,6 +34,43 @@ def test_create_uses_fixed_openshell_arguments(monkeypatch: pytest.MonkeyPatch, 
     assert "--memory" in captured
 
 
+def test_upload_targets_exact_sandbox_and_workspace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    policy = tmp_path / "policy.yaml"
+    policy.write_text("version: 1\n", encoding="utf-8")
+    source = tmp_path / "source.tar.gz"
+    source.write_bytes(b"archive")
+    captured: list[str] = []
+
+    def fake_run(argv: list[str], **_: object) -> SimpleNamespace:
+        captured.extend(argv)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("gaia_secure_agent.sandbox.subprocess.run", fake_run)
+    manager = OpenShellSandboxManager(policy_path=policy)
+    manager.upload(SandboxHandle(name="gaia-test"), source, "/sandbox/source.tar.gz")
+
+    assert captured == [
+        "openshell",
+        "sandbox",
+        "upload",
+        "gaia-test",
+        str(source),
+        "/sandbox/source.tar.gz",
+    ]
+
+
+def test_upload_rejects_destination_outside_workspace(tmp_path: Path) -> None:
+    policy = tmp_path / "policy.yaml"
+    source = tmp_path / "source.tar.gz"
+    source.write_bytes(b"archive")
+    manager = OpenShellSandboxManager(policy_path=policy)
+
+    with pytest.raises(ValueError):
+        manager.upload(SandboxHandle(name="gaia-test"), source, "/etc/source.tar.gz")
+
+
 def test_delete_targets_exact_sandbox(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     policy = tmp_path / "policy.yaml"
     policy.write_text("version: 1\n", encoding="utf-8")
