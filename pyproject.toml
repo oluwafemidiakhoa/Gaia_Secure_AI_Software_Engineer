@@ -13,6 +13,7 @@ dependencies = [
   "typer>=0.12,<1",
   "rich>=13.7,<15",
   "PyYAML>=6.0,<7",
+  "PyJWT[crypto]>=2.10,<3",
 ]
 
 [project.optional-dependencies]
