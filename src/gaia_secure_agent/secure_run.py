@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -14,7 +15,7 @@ from .stage import StagedSource, stage_job_source
 
 
 class SecureRunResult(BaseModel):
-    job_id: str
+    job_id: UUID
     sandbox_name: str
     staged: StagedSource
     prepared: PreparedRepository
@@ -46,7 +47,6 @@ def secure_autonomous_run(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     staged: StagedSource | None = None
-    primary_error: Exception | None = None
     try:
         staged = stage_job_source(job, manager, output_dir / "source")
         handle = SandboxHandle(name=staged.sandbox_name)
@@ -89,19 +89,12 @@ def secure_autonomous_run(
             "github_write_performed": False,
         }
         run_manifest = _write_run_manifest(manifest_payload, output_dir / "run.json")
-    except Exception as exc:
-        primary_error = exc
-        raise
     finally:
         if staged is not None:
-            try:
-                manager.delete(SandboxHandle(name=staged.sandbox_name))
-            except (OSError, RuntimeError, ValueError) as cleanup_error:
-                if primary_error is None:
-                    raise RuntimeError(f"secure run completed but sandbox cleanup failed: {cleanup_error}") from cleanup_error
+            manager.delete(SandboxHandle(name=staged.sandbox_name))
 
     return SecureRunResult(
-        job_id=str(job.id),
+        job_id=job.id,
         sandbox_name=staged.sandbox_name,
         staged=staged,
         prepared=prepared,
