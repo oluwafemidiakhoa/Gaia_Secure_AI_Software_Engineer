@@ -10,6 +10,7 @@ from rich.panel import Panel
 
 from .acquire import acquire_job_source
 from .agent_probe import authorize_claude_execution, parse_claude_version
+from .agent_run import run_coding_agent
 from .models import CodingJob
 from .orchestrator import Orchestrator
 from .planner import build_execution_plan
@@ -98,6 +99,34 @@ def verify_agent(sandbox: Annotated[str, typer.Option("--sandbox")], policy: Ann
         raise typer.Exit(code=1)
     authorized = authorize_claude_execution(probe, permission_mode_verified=True)
     console.print(Panel.fit(json.dumps(authorized.model_dump(mode="json"), indent=2, default=str), title="Verified Sandbox Coding Agent"))
+
+
+@app.command("execute-agent")
+def execute_agent(
+    sandbox: Annotated[str, typer.Option("--sandbox")],
+    repo: Annotated[str, typer.Option("--repo")],
+    task: Annotated[str, typer.Option("--task")],
+    base_branch: Annotated[str, typer.Option("--base-branch")] = "main",
+    max_turns: Annotated[int, typer.Option("--max-turns")] = 20,
+    timeout: Annotated[int, typer.Option("--timeout")] = 900,
+    output_dir: Annotated[Path, typer.Option("--output-dir")] = Path("agent-run"),
+    policy: Annotated[Path, typer.Option("--policy")] = Path("policies/openshell-mvp.yaml"),
+) -> None:
+    """Run one canary-gated Claude coding task without GitHub write authority."""
+
+    job = _build_job(repo, task, base_branch, "claude", timeout, max_turns)
+    manager = OpenShellSandboxManager(policy_path=policy)
+    try:
+        result = run_coding_agent(
+            manager,
+            job=job,
+            sandbox_name=sandbox,
+            output_dir=output_dir,
+        )
+    except (RuntimeError, ValueError) as exc:
+        console.print(f"Agent execution refused: {exc}")
+        raise typer.Exit(code=1) from exc
+    console.print(Panel.fit(json.dumps(result.model_dump(mode="json"), indent=2, default=str), title="Gated Coding Agent Result"))
 
 
 @app.command()
