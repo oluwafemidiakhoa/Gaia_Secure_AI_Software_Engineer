@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from pathlib import Path
 
 from pydantic import BaseModel, Field
 
@@ -41,8 +41,7 @@ def parse_github_repository(repository: str) -> RepositoryIdentity:
         raise ValueError("repository URL must be exactly https://github.com/<owner>/<repo>")
 
     owner, name = parts
-    if name.endswith(".git"):
-        name = name[:-4]
+    name = name.removesuffix(".git")
 
     if not owner or not name or not _NAME.fullmatch(owner) or not _NAME.fullmatch(name):
         raise ValueError("repository owner or name contains unsupported characters")
