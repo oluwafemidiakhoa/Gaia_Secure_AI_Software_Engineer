@@ -13,10 +13,15 @@ class FakeManager:
         self.source_digest = source_digest
         self.patch_digest = patch_digest or hashlib.sha256(patch).hexdigest()
         self.downloaded = False
+        self.reset_called = False
         self.uploaded_source = False
         self.baseline_built = False
 
+    def reset_post_agent_control(self, handle: SandboxHandle) -> None:
+        self.reset_called = True
+
     def upload(self, handle: SandboxHandle, source: Path, destination: str) -> None:
+        assert self.reset_called is True
         assert destination == "/sandbox/input/original-after-agent.tar.gz"
         self.uploaded_source = True
 
@@ -62,6 +67,7 @@ def test_collect_patch_reconstructs_trusted_baseline(tmp_path: Path) -> None:
         output_dir=tmp_path / "out",
     )
 
+    assert manager.reset_called is True
     assert manager.uploaded_source is True
     assert manager.baseline_built is True
     assert result.source_sha256 == source_digest
@@ -85,6 +91,7 @@ def test_collect_patch_refuses_changed_control_plane_source(tmp_path: Path) -> N
             output_dir=tmp_path / "out",
         )
 
+    assert manager.reset_called is False
     assert manager.uploaded_source is False
 
 
