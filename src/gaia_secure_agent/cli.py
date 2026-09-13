@@ -12,6 +12,7 @@ from .acquire import acquire_job_source
 from .models import CodingJob
 from .orchestrator import Orchestrator
 from .planner import build_execution_plan
+from .prepare import prepare_staged_repository
 from .repository import resolve_github_commit, write_resolution_manifest
 from .runtime import DryRunRuntime, OpenShellRuntime
 from .sandbox import OpenShellSandboxManager, SandboxHandle
@@ -109,6 +110,31 @@ def stage(
     payload["digest_verified"] = True
     rendered = json.dumps(payload, indent=2, default=str)
     console.print(Panel.fit(rendered, title="Verified Source Staging"))
+
+
+@app.command()
+def prepare(
+    sandbox: Annotated[str, typer.Option("--sandbox", help="Sandbox name returned by sca stage")],
+    expected_sha256: Annotated[str, typer.Option("--expected-sha256")],
+    policy: Annotated[Path, typer.Option("--policy")] = Path("policies/openshell-mvp.yaml"),
+) -> None:
+    """Verify the staged archive again and materialize the repository without executing its code."""
+
+    manager = OpenShellSandboxManager(policy_path=policy)
+    try:
+        prepared = prepare_staged_repository(
+            manager,
+            sandbox_name=sandbox,
+            expected_sha256=expected_sha256,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--expected-sha256") from exc
+    except RuntimeError as exc:
+        console.print(f"Repository preparation refused: {exc}")
+        raise typer.Exit(code=1) from exc
+
+    rendered = json.dumps(prepared.model_dump(mode="json"), indent=2, default=str)
+    console.print(Panel.fit(rendered, title="Verified Repository Preparation"))
 
 
 @app.command()
