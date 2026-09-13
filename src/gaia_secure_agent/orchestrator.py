@@ -23,7 +23,7 @@ class Orchestrator:
         try:
             result = self.runtime.execute(job, workspace)
             status = JobStatus.SUCCEEDED
-        except Exception as exc:
+        except (PermissionError, RuntimeError, ValueError) as exc:
             return ExecutionReceipt(
                 job_id=job.id,
                 status=JobStatus.FAILED,
