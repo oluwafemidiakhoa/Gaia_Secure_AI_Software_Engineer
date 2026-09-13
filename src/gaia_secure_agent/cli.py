@@ -14,7 +14,7 @@ from .orchestrator import Orchestrator
 from .planner import build_execution_plan
 from .repository import resolve_github_commit, write_resolution_manifest
 from .runtime import DryRunRuntime, OpenShellRuntime
-from .sandbox import OpenShellSandboxManager
+from .sandbox import OpenShellSandboxManager, SandboxHandle
 from .stage import cleanup_staged_source, stage_job_source
 from .worker import inspect_worker
 
@@ -96,7 +96,8 @@ def stage(
     manager = OpenShellSandboxManager(policy_path=policy)
     staged = stage_job_source(job, manager, output_dir)
 
-    sandbox_digest = manager.sha256(staged.sandbox_name and __import__("gaia_secure_agent.sandbox", fromlist=["SandboxHandle"]).SandboxHandle(name=staged.sandbox_name), "/sandbox/input/source.tar.gz")
+    handle = SandboxHandle(name=staged.sandbox_name)
+    sandbox_digest = manager.sha256(handle, "/sandbox/input/source.tar.gz")
     expected_digest = staged.acquisition.bundle.archive_sha256
     if sandbox_digest != expected_digest:
         cleanup_staged_source(manager, staged.sandbox_name)
