@@ -5,6 +5,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from .archive_inspect import ArchiveInspection, inspect_source_archive
 from .models import CodingJob
 from .repository import ResolvedRepository, resolve_github_commit, write_resolution_manifest
 from .source_bundle import SourceBundle, acquire_public_source_bundle
@@ -15,9 +16,11 @@ class AcquisitionResult(BaseModel):
     resolved: ResolvedRepository
     transfer: RepositoryTransfer
     bundle: SourceBundle
+    inspection: ArchiveInspection
     repository_manifest: Path
     transfer_manifest: Path
     bundle_manifest: Path
+    inspection_manifest: Path
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> Path:
@@ -39,16 +42,24 @@ def acquire_job_source(job: CodingJob, output_dir: Path) -> AcquisitionResult:
     )
 
     bundle = acquire_public_source_bundle(resolved, output_dir / "source.tar.gz")
+    inspection = inspect_source_archive(bundle.archive_path)
+
     bundle_manifest = _write_json(
         output_dir / "bundle.json",
         bundle.model_dump(mode="json"),
+    )
+    inspection_manifest = _write_json(
+        output_dir / "archive-inspection.json",
+        inspection.model_dump(mode="json"),
     )
 
     return AcquisitionResult(
         resolved=resolved,
         transfer=transfer,
         bundle=bundle,
+        inspection=inspection,
         repository_manifest=repository_manifest,
         transfer_manifest=transfer_manifest,
         bundle_manifest=bundle_manifest,
+        inspection_manifest=inspection_manifest,
     )
