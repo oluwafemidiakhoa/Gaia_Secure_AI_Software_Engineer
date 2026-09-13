@@ -1,10 +1,15 @@
 import hashlib
+import json
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 
-from gaia_secure_agent.patch import collect_patch
+from gaia_secure_agent.patch import collect_patch, write_patch_manifest
 from gaia_secure_agent.sandbox import SandboxHandle
+
+
+JOB_ID = UUID("12345678-1234-5678-1234-567812345678")
 
 
 class FakeManager:
@@ -54,19 +59,26 @@ def _source_archive(tmp_path: Path) -> tuple[Path, str]:
     return path, hashlib.sha256(b"trusted-source").hexdigest()
 
 
+def _collect(manager: FakeManager, source: Path, source_digest: str, output_dir: Path, **kwargs):
+    return collect_patch(
+        manager,
+        job_id=JOB_ID,
+        sandbox_name="gaia-test",
+        source_archive=source,
+        expected_source_sha256=source_digest,
+        output_dir=output_dir,
+        **kwargs,
+    )
+
+
 def test_collect_patch_reconstructs_trusted_baseline(tmp_path: Path) -> None:
     source, source_digest = _source_archive(tmp_path)
     patch = b"diff --git a/a.txt b/a.txt\n"
     manager = FakeManager(patch, source_digest)
 
-    result = collect_patch(
-        manager,
-        sandbox_name="gaia-test",
-        source_archive=source,
-        expected_source_sha256=source_digest,
-        output_dir=tmp_path / "out",
-    )
+    result = _collect(manager, source, source_digest, tmp_path / "out")
 
+    assert result.job_id == JOB_ID
     assert manager.reset_called is True
     assert manager.uploaded_source is True
     assert manager.baseline_built is True
@@ -77,19 +89,25 @@ def test_collect_patch_reconstructs_trusted_baseline(tmp_path: Path) -> None:
     assert result.has_changes is True
 
 
+def test_patch_manifest_persists_job_and_digest(tmp_path: Path) -> None:
+    source, source_digest = _source_archive(tmp_path)
+    manager = FakeManager(b"patch", source_digest)
+    artifact = _collect(manager, source, source_digest, tmp_path / "out")
+
+    manifest = write_patch_manifest(artifact, tmp_path / "out" / "patch.json")
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+
+    assert payload["job_id"] == str(JOB_ID)
+    assert payload["sha256"] == artifact.sha256
+
+
 def test_collect_patch_refuses_changed_control_plane_source(tmp_path: Path) -> None:
     source, source_digest = _source_archive(tmp_path)
     source.write_bytes(b"tampered")
     manager = FakeManager(b"patch", source_digest)
 
     with pytest.raises(RuntimeError, match="control-plane source archive digest changed"):
-        collect_patch(
-            manager,
-            sandbox_name="gaia-test",
-            source_archive=source,
-            expected_source_sha256=source_digest,
-            output_dir=tmp_path / "out",
-        )
+        _collect(manager, source, source_digest, tmp_path / "out")
 
     assert manager.reset_called is False
     assert manager.uploaded_source is False
@@ -100,14 +118,7 @@ def test_collect_patch_refuses_oversized_patch(tmp_path: Path) -> None:
     manager = FakeManager(b"123456", source_digest)
 
     with pytest.raises(RuntimeError, match="size limit"):
-        collect_patch(
-            manager,
-            sandbox_name="gaia-test",
-            source_archive=source,
-            expected_source_sha256=source_digest,
-            output_dir=tmp_path / "out",
-            max_bytes=5,
-        )
+        _collect(manager, source, source_digest, tmp_path / "out", max_bytes=5)
 
     assert manager.downloaded is False
 
@@ -117,12 +128,6 @@ def test_collect_patch_deletes_mismatched_download(tmp_path: Path) -> None:
     manager = FakeManager(b"patch", source_digest, patch_digest="a" * 64)
 
     with pytest.raises(RuntimeError, match="digest"):
-        collect_patch(
-            manager,
-            sandbox_name="gaia-test",
-            source_archive=source,
-            expected_source_sha256=source_digest,
-            output_dir=tmp_path / "out",
-        )
+        _collect(manager, source, source_digest, tmp_path / "out")
 
     assert not (tmp_path / "out" / "changes.patch").exists()
