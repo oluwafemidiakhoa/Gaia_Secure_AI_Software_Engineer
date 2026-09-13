@@ -8,6 +8,7 @@ import typer
 from rich.console import Console
 from rich.panel import Panel
 
+from .acquire import acquire_job_source
 from .models import CodingJob
 from .orchestrator import Orchestrator
 from .planner import build_execution_plan
@@ -64,6 +65,20 @@ def resolve(
     write_resolution_manifest(resolved, output)
     rendered = json.dumps(resolved.model_dump(mode="json"), indent=2, default=str)
     console.print(Panel.fit(rendered, title="Immutable Repository Resolution"))
+
+
+@app.command()
+def acquire(
+    repo: Annotated[str, typer.Option("--repo", help="Public GitHub repository URL")],
+    base_branch: Annotated[str, typer.Option("--base-branch")] = "main",
+    output_dir: Annotated[Path, typer.Option("--output-dir")] = Path("acquired-source"),
+) -> None:
+    """Resolve and download an immutable source bundle plus trust manifests."""
+
+    job = _build_job(repo, "acquire immutable repository source", base_branch, "acquirer", 120, 1)
+    result = acquire_job_source(job, output_dir)
+    rendered = json.dumps(result.model_dump(mode="json"), indent=2, default=str)
+    console.print(Panel.fit(rendered, title="Immutable Source Acquisition"))
 
 
 @app.command()
