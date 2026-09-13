@@ -26,6 +26,19 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _evidence_digest(receipt: EvidenceReceipt) -> str:
+    payload = {
+        "job_id": str(receipt.job_id),
+        "source_commit": receipt.source_commit,
+        "source_sha256": receipt.source_sha256,
+        "agent_output_sha256": receipt.agent_output_sha256,
+        "patch_sha256": receipt.patch_sha256,
+        "run_manifest_sha256": receipt.run_manifest_sha256,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def build_evidence_receipt(
     *,
     job_id: UUID,
@@ -36,17 +49,16 @@ def build_evidence_receipt(
     run_manifest_path: Path,
 ) -> EvidenceReceipt:
     run_manifest_sha256 = sha256_file(run_manifest_path)
-    payload = {
-        "job_id": str(job_id),
-        "source_commit": source_commit,
-        "source_sha256": source_sha256,
-        "agent_output_sha256": agent_output_sha256,
-        "patch_sha256": patch_sha256,
-        "run_manifest_sha256": run_manifest_sha256,
-    }
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    evidence_sha256 = hashlib.sha256(encoded).hexdigest()
-    return EvidenceReceipt(**payload, evidence_sha256=evidence_sha256)
+    receipt = EvidenceReceipt(
+        job_id=job_id,
+        source_commit=source_commit,
+        source_sha256=source_sha256,
+        agent_output_sha256=agent_output_sha256,
+        patch_sha256=patch_sha256,
+        run_manifest_sha256=run_manifest_sha256,
+        evidence_sha256="0" * 64,
+    )
+    return receipt.model_copy(update={"evidence_sha256": _evidence_digest(receipt)})
 
 
 def write_evidence_receipt(receipt: EvidenceReceipt, path: Path) -> Path:
@@ -58,3 +70,27 @@ def write_evidence_receipt(receipt: EvidenceReceipt, path: Path) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def load_evidence_receipt(path: Path) -> EvidenceReceipt:
+    if not path.is_file():
+        raise ValueError(f"evidence receipt does not exist: {path}")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("evidence receipt is not valid JSON") from exc
+    return EvidenceReceipt.model_validate(payload)
+
+
+def verify_evidence_receipt(
+    receipt_path: Path,
+    *,
+    run_manifest_path: Path,
+) -> EvidenceReceipt:
+    receipt = load_evidence_receipt(receipt_path)
+    actual_run_manifest_sha256 = sha256_file(run_manifest_path)
+    if actual_run_manifest_sha256 != receipt.run_manifest_sha256:
+        raise PermissionError("run manifest digest does not match evidence receipt")
+    if _evidence_digest(receipt) != receipt.evidence_sha256:
+        raise PermissionError("evidence fingerprint does not match receipt contents")
+    return receipt
