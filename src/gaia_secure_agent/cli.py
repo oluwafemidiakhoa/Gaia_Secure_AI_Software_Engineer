@@ -18,10 +18,12 @@ from .orchestrator import Orchestrator
 from .patch import collect_patch, write_patch_manifest
 from .planner import build_execution_plan
 from .prepare import prepare_staged_repository
+from .publication import verify_publication
 from .repository import resolve_github_commit, write_resolution_manifest
 from .review import create_approval_record, write_approval_record
 from .runtime import DryRunRuntime, OpenShellRuntime
 from .sandbox import OpenShellSandboxManager, SandboxHandle
+from .secure_run import secure_autonomous_run
 from .stage import cleanup_staged_source, stage_job_source
 from .worker import inspect_worker
 
@@ -116,8 +118,6 @@ def execute_agent(
     output_dir: Annotated[Path, typer.Option("--output-dir")] = Path("agent-run"),
     policy: Annotated[Path, typer.Option("--policy")] = Path("policies/openshell-mvp.yaml"),
 ) -> None:
-    """Run one canary-gated Claude coding task without GitHub write authority."""
-
     job = _build_job(repo, task, base_branch, "claude", timeout, max_turns)
     manager = OpenShellSandboxManager(policy_path=policy)
     try:
@@ -138,8 +138,6 @@ def collect_patch_command(
     max_bytes: Annotated[int, typer.Option("--max-bytes")] = 10 * 1024 * 1024,
     policy: Annotated[Path, typer.Option("--policy")] = Path("policies/openshell-mvp.yaml"),
 ) -> None:
-    """Reconstruct a trusted post-agent baseline and collect a verified bounded patch."""
-
     try:
         parsed_job_id = UUID(job_id)
     except ValueError as exc:
@@ -171,8 +169,6 @@ def approve_patch(
     note: Annotated[str | None, typer.Option("--note")] = None,
     output: Annotated[Path, typer.Option("--output")] = Path("approval.json"),
 ) -> None:
-    """Record a non-overwritable human decision bound to one exact patch digest."""
-
     try:
         parsed_job_id = UUID(job_id)
     except ValueError as exc:
@@ -188,6 +184,56 @@ def approve_patch(
         console.print(f"Approval record refused: {exc}")
         raise typer.Exit(code=1) from exc
     console.print(Panel.fit(json.dumps(record.model_dump(mode="json"), indent=2, default=str), title="Human Patch Decision"))
+
+
+@app.command("verify-publication")
+def verify_publication_command(
+    repository_manifest: Annotated[Path, typer.Option("--repository-manifest")],
+    bundle_manifest: Annotated[Path, typer.Option("--bundle-manifest")],
+    patch_manifest: Annotated[Path, typer.Option("--patch-manifest")],
+    approval_manifest: Annotated[Path, typer.Option("--approval-manifest")],
+) -> None:
+    """Verify all immutable evidence required before any trusted GitHub write."""
+
+    try:
+        plan = verify_publication(
+            repository_manifest=repository_manifest,
+            bundle_manifest=bundle_manifest,
+            patch_manifest=patch_manifest,
+            approval_manifest=approval_manifest,
+        )
+    except (PermissionError, RuntimeError, ValueError) as exc:
+        console.print(f"Publication verification refused: {exc}")
+        raise typer.Exit(code=1) from exc
+    console.print(Panel.fit(json.dumps(plan.model_dump(mode="json"), indent=2, default=str), title="Trusted Publication Plan"))
+
+
+@app.command("secure-run")
+def secure_run_command(
+    repo: Annotated[str, typer.Option("--repo")],
+    task: Annotated[str, typer.Option("--task")],
+    base_branch: Annotated[str, typer.Option("--base-branch")] = "main",
+    max_turns: Annotated[int, typer.Option("--max-turns")] = 20,
+    timeout: Annotated[int, typer.Option("--timeout")] = 900,
+    output_dir: Annotated[Path, typer.Option("--output-dir")] = Path("secure-run"),
+    patch_max_bytes: Annotated[int, typer.Option("--patch-max-bytes")] = 10 * 1024 * 1024,
+    policy: Annotated[Path, typer.Option("--policy")] = Path("policies/openshell-mvp.yaml"),
+) -> None:
+    """Run one complete autonomous coding job and stop at a verified patch requiring human approval."""
+
+    job = _build_job(repo, task, base_branch, "claude", timeout, max_turns)
+    manager = OpenShellSandboxManager(policy_path=policy)
+    try:
+        result = secure_autonomous_run(
+            manager,
+            job=job,
+            output_dir=output_dir,
+            patch_max_bytes=patch_max_bytes,
+        )
+    except (OSError, PermissionError, RuntimeError, ValueError) as exc:
+        console.print(f"Secure autonomous run failed: {exc}")
+        raise typer.Exit(code=1) from exc
+    console.print(Panel.fit(json.dumps(result.model_dump(mode="json"), indent=2, default=str), title="Secure Autonomous Coding Result"))
 
 
 @app.command()
