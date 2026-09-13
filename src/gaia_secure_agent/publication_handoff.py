@@ -17,6 +17,7 @@ class PublicationHandoff(BaseModel):
     base_branch: str
     base_commit: str = Field(pattern=r"^[0-9a-f]{40}$")
     head_branch: str
+    title: str = Field(min_length=1, max_length=200)
     patch_path: Path
     patch_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -52,6 +53,7 @@ def build_publication_handoff(
         base_branch=plan.base_branch,
         base_commit=plan.base_commit,
         head_branch=request.head_branch,
+        title=request.title,
         patch_path=plan.patch_path,
         patch_sha256=plan.patch_sha256,
         evidence_sha256=plan.evidence_sha256,
