@@ -122,6 +122,25 @@ class OpenShellSandboxManager:
             detail = (extraction.stderr or extraction.stdout).strip()
             raise RuntimeError(f"OpenShell repository extraction failed: {detail}")
 
+    def reset_post_agent_control(self, handle: SandboxHandle) -> None:
+        name = self._validate_name(handle.name)
+        completed = subprocess.run(
+            [
+                "openshell", "sandbox", "exec", "-n", name, "--no-login-shell", "--",
+                "rm", "-rf", "--",
+                "/sandbox/control",
+                "/sandbox/output",
+                "/sandbox/input/original-after-agent.tar.gz",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=self.command_timeout,
+            check=False,
+        )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).strip()
+            raise RuntimeError(f"Post-agent evidence namespace reset failed: {detail}")
+
     def _git_exec_prefix(self, name: str, workdir: str) -> list[str]:
         return ["openshell", "sandbox", "exec", "-n", name, "--workdir", workdir, "--env", "GIT_CONFIG_GLOBAL=/dev/null", "--env", "GIT_CONFIG_SYSTEM=/dev/null", "--no-login-shell", "--"]
 
