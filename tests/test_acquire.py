@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from gaia_secure_agent.acquire import acquire_job_source
+from gaia_secure_agent.archive_inspect import ArchiveInspection
 from gaia_secure_agent.models import CodingJob
 from gaia_secure_agent.repository import ResolvedRepository
 from gaia_secure_agent.source_bundle import SourceBundle
@@ -32,6 +33,16 @@ def test_acquire_job_source_writes_all_manifests(monkeypatch, tmp_path: Path) ->
         )
 
     monkeypatch.setattr("gaia_secure_agent.acquire.acquire_public_source_bundle", fake_bundle)
+    monkeypatch.setattr(
+        "gaia_secure_agent.acquire.inspect_source_archive",
+        lambda _path: ArchiveInspection(
+            top_level_root="project-aaaaaaaa",
+            member_count=2,
+            regular_file_count=1,
+            total_uncompressed_bytes=6,
+            manifest_sha256="d" * 64,
+        ),
+    )
 
     result = acquire_job_source(job, tmp_path / "acquired")
 
@@ -39,7 +50,9 @@ def test_acquire_job_source_writes_all_manifests(monkeypatch, tmp_path: Path) ->
     assert result.transfer.github_write_allowed is False
     assert result.transfer.credentials_embedded is False
     assert result.bundle.archive_sha256 == "c" * 64
+    assert result.inspection.accepted is True
     assert result.repository_manifest.is_file()
     assert result.transfer_manifest.is_file()
     assert result.bundle_manifest.is_file()
+    assert result.inspection_manifest.is_file()
     assert result.bundle.archive_path.read_bytes() == b"bundle"
