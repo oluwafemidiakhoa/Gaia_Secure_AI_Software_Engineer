@@ -6,6 +6,7 @@ from uuid import UUID
 import pytest
 
 from gaia_secure_agent.approval import ApprovalDecision, ApprovalRecord
+from gaia_secure_agent.evidence import build_evidence_receipt, write_evidence_receipt
 from gaia_secure_agent.patch import PatchArtifact
 from gaia_secure_agent.publication import verify_publication
 from gaia_secure_agent.repository import ResolvedRepository
@@ -65,84 +66,105 @@ def _fixtures(tmp_path: Path):
         actor="reviewer",
     )
 
+    run_manifest = tmp_path / "run.json"
+    run_manifest.write_text('{"job":"complete"}\n', encoding="utf-8")
+    evidence = build_evidence_receipt(
+        job_id=JOB_ID,
+        source_commit=repository.commit_sha,
+        source_sha256=source_sha,
+        agent_output_sha256="f" * 64,
+        patch_sha256=patch_sha,
+        run_manifest_path=run_manifest,
+    )
+    evidence_manifest = tmp_path / "evidence.json"
+    write_evidence_receipt(evidence, evidence_manifest)
+
     return (
         _write(tmp_path / "repository.json", repository),
         _write(tmp_path / "bundle.json", bundle),
         _write(tmp_path / "patch.json", patch),
         _write(tmp_path / "approval.json", approval),
+        evidence_manifest,
+        run_manifest,
         patch_path,
         source_path,
     )
 
 
-def test_publication_requires_all_matching_evidence(tmp_path: Path) -> None:
-    repository, bundle, patch, approval, _, _ = _fixtures(tmp_path)
-
-    plan = verify_publication(
+def _verify(repository, bundle, patch, approval, evidence, run_manifest):
+    return verify_publication(
         repository_manifest=repository,
         bundle_manifest=bundle,
         patch_manifest=patch,
         approval_manifest=approval,
+        evidence_manifest=evidence,
+        run_manifest=run_manifest,
     )
+
+
+def test_publication_requires_all_matching_evidence(tmp_path: Path) -> None:
+    repository, bundle, patch, approval, evidence, run_manifest, _, _ = _fixtures(tmp_path)
+
+    plan = _verify(repository, bundle, patch, approval, evidence, run_manifest)
 
     assert plan.job_id == JOB_ID
     assert plan.base_commit == "a" * 40
     assert plan.human_approval_verified is True
+    assert plan.evidence_verified is True
     assert plan.agent_github_write_allowed is False
     assert plan.approved_by == "reviewer"
+    assert len(plan.evidence_sha256) == 64
 
 
 def test_publication_refuses_patch_changed_after_approval(tmp_path: Path) -> None:
-    repository, bundle, patch, approval, patch_path, _ = _fixtures(tmp_path)
+    repository, bundle, patch, approval, evidence, run_manifest, patch_path, _ = _fixtures(tmp_path)
     patch_path.write_bytes(b"tampered")
 
     with pytest.raises(PermissionError, match="size changed|digest changed"):
-        verify_publication(
-            repository_manifest=repository,
-            bundle_manifest=bundle,
-            patch_manifest=patch,
-            approval_manifest=approval,
-        )
+        _verify(repository, bundle, patch, approval, evidence, run_manifest)
 
 
 def test_publication_refuses_source_changed_after_acquisition(tmp_path: Path) -> None:
-    repository, bundle, patch, approval, _, source_path = _fixtures(tmp_path)
+    repository, bundle, patch, approval, evidence, run_manifest, _, source_path = _fixtures(tmp_path)
     source_path.write_bytes(b"tampered-source")
 
     with pytest.raises(PermissionError, match="size changed|digest changed"):
-        verify_publication(
-            repository_manifest=repository,
-            bundle_manifest=bundle,
-            patch_manifest=patch,
-            approval_manifest=approval,
-        )
+        _verify(repository, bundle, patch, approval, evidence, run_manifest)
 
 
 def test_publication_refuses_wrong_source_bundle(tmp_path: Path) -> None:
-    repository, bundle_path, patch, approval, _, _ = _fixtures(tmp_path)
+    repository, bundle_path, patch, approval, evidence, run_manifest, _, _ = _fixtures(tmp_path)
     payload = json.loads(bundle_path.read_text(encoding="utf-8"))
     payload["commit_sha"] = "e" * 40
     bundle_path.write_text(json.dumps(payload), encoding="utf-8")
 
     with pytest.raises(PermissionError, match="commit"):
-        verify_publication(
-            repository_manifest=repository,
-            bundle_manifest=bundle_path,
-            patch_manifest=patch,
-            approval_manifest=approval,
-        )
+        _verify(repository, bundle_path, patch, approval, evidence, run_manifest)
 
 
 def test_publication_refuses_rejected_patch(tmp_path: Path) -> None:
-    repository, bundle, patch, approval_path, _, _ = _fixtures(tmp_path)
+    repository, bundle, patch, approval_path, evidence, run_manifest, _, _ = _fixtures(tmp_path)
     payload = json.loads(approval_path.read_text(encoding="utf-8"))
     payload["decision"] = "reject"
     approval_path.write_text(json.dumps(payload), encoding="utf-8")
 
     with pytest.raises(PermissionError, match="not been approved"):
-        verify_publication(
-            repository_manifest=repository,
-            bundle_manifest=bundle,
-            patch_manifest=patch,
-            approval_manifest=approval_path,
-        )
+        _verify(repository, bundle, patch, approval_path, evidence, run_manifest)
+
+
+def test_publication_refuses_tampered_run_manifest(tmp_path: Path) -> None:
+    repository, bundle, patch, approval, evidence, run_manifest, _, _ = _fixtures(tmp_path)
+    run_manifest.write_text('{"job":"tampered"}\n', encoding="utf-8")
+
+    with pytest.raises(PermissionError, match="run manifest digest"):
+        _verify(repository, bundle, patch, approval, evidence, run_manifest)
+
+
+def test_publication_refuses_mismatched_evidence_patch(tmp_path: Path) -> None:
+    repository, bundle, patch, approval, evidence, run_manifest, _, _ = _fixtures(tmp_path)
+    payload = json.loads(evidence.read_text(encoding="utf-8"))
+    payload["patch_sha256"] = "e" * 64
+    evidence.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(PermissionError, match="evidence fingerprint|patch digest"):
+        _verify(repository, bundle, patch, approval, evidence, run_manifest)
