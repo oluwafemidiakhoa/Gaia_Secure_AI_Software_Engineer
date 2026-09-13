@@ -12,6 +12,7 @@ from .models import CodingJob
 from .orchestrator import Orchestrator
 from .planner import build_execution_plan
 from .runtime import DryRunRuntime, OpenShellRuntime
+from .worker import inspect_worker
 
 app = typer.Typer(no_args_is_help=True, help="Gaia Secure AI Software Engineer")
 console = Console()
@@ -33,6 +34,20 @@ def _build_job(
         timeout_seconds=timeout,
         max_turns=max_turns,
     )
+
+
+@app.command()
+def doctor(
+    agent: Annotated[str, typer.Option("--agent", help="claude or codex")] = "claude",
+    policy: Annotated[Path, typer.Option("--policy")] = Path("policies/openshell-mvp.yaml"),
+) -> None:
+    """Check whether the current machine is ready to act as a secure coding worker."""
+
+    report = inspect_worker(policy, agent=agent)
+    rendered = json.dumps(report.model_dump(mode="json"), indent=2, default=str)
+    console.print(Panel.fit(rendered, title="Secure Worker Readiness"))
+    if not report.ready:
+        raise typer.Exit(code=1)
 
 
 @app.command()
